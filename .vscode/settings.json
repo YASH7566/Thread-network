@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "zephyr.h": "c",
+        "kernel.h": "c"
+    }
+}

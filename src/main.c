@@ -1,68 +1,78 @@
-#include <zephyr.h>
-#include <device.h>
-#include <devicetree.h>
-
 #include <zephyr/zephyr.h>
 #include <zephyr/drivers/gpio.h>
 
 
-#include <net/openthread.h>
 #include <openthread/thread.h>
 #include <openthread/udp.h> 
 
 
+/* 1000 msec = 1 sec */
+#define SLEEP_TIME_MS   1000
 
-void udpReceive_cb(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo);
-static void udp_init(void);
+/* The devicetree node identifier for the "led0" alias. */
+#define BUTTON0_NODE DT_NODELABEL(button0)
+
+
+static void udp_send(void);
+
+
+
+void button0_pressed_callback(const struct device *gpiob, struct gpio_callback *cb, gpio_port_pins_t pins){
+	udp_send();
+}
 
 
 void main(void)
-{
+{	
+	static const struct gpio_dt_spec button0 = GPIO_DT_SPEC_GET(BUTTON0_NODE, gpios);
+	if (!(device_is_ready(button0.port))) {printk("port isn't ready\n"); return;}
 
-	// udp_init(); had errors when this this line wasnt in while(1)
-	
+	gpio_pin_configure_dt(&button0, GPIO_INPUT);
+	gpio_pin_interrupt_configure_dt(&button0,GPIO_INT_EDGE_TO_INACTIVE); // configured interrupt
+	static struct gpio_callback button0_cb; // will hold information such as the pin number and the function to be called when an interrupt occurs (callback function).
+	gpio_init_callback(&button0_cb, button0_pressed_callback, BIT(button0.pin));  /* Initialize the struct gpio_callback button_cb_data by passing this variable,
+	along with the callback function and the bit mask for the GPIO pin button.pin to gpio_init_callback().*/
+	gpio_add_callback(button0.port, &button0_cb); // add the callback func
+
+
 	while (1) {
-		udp_init();
-		int a = 5;
-		int c=5;
-		c = c+5;
 		
-		// printk("qwerqwr\n") // mcu keeps resetting itself
-		// k_msleep(1000); // mcu keeps resetting itself
+		k_msleep(SLEEP_TIME_MS);
 	}
-	
-
-	
 }
 
-void udpReceive_cb(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo)
-{
-	uint16_t payloadLength = otMessageGetLength(aMessage) - otMessageGetOffset(aMessage);
-	char buf[payloadLength+1];
-	otMessageRead(aMessage, otMessageGetOffset(aMessage),buf, payloadLength);
-	buf[payloadLength]='\0';
-	printk("Received: %s\n",buf);
-}
 
-static void udp_init(void)
+static void udp_send(void) 
 {
 	otError error = OT_ERROR_NONE;
+	const char *buf = "Hello Thread xd"; 
 
-	otInstance *myInstance = openthread_get_default_instance();
+	otInstance *myInstance; 
+	myInstance = openthread_get_default_instance();
+	otUdpSocket mySocket; 
 
-	otUdpSocket mySocket;
-	otSockAddr mySockAddr;
-	memset(&mySockAddr,0,sizeof(mySockAddr));
-	mySockAddr.mPort = 2222; // we chose this port.
-
+	otMessageInfo messageInfo;
+	memset(&messageInfo, 0, sizeof(messageInfo)); 
+	otIp6AddressFromString("ff03::1", &messageInfo.mPeerAddr);
+	messageInfo.mPeerPort = 2222; 
 
 	do{
-		error = otUdpOpen(myInstance, &mySocket, udpReceive_cb, NULL); //udp mesajı gelince tanımlanan callback funca giriyor.
+		error = otUdpOpen(myInstance, &mySocket, NULL, NULL);
 		if (error != OT_ERROR_NONE) break;
-		error = otUdpBind(myInstance, &mySocket, &mySockAddr, OT_NETIF_THREAD);
-	}while(false);
 
-	if (error != OT_ERROR_NONE){
-		printk("init_udp error: %d\n", error);
-	}
+		otMessage *test_Message = otUdpNewMessage(myInstance, NULL);
+		error = otMessageAppend(test_Message, buf, (uint16_t)strlen(buf));
+		if (error != OT_ERROR_NONE) break;
+
+		error = otUdpSend(myInstance, &mySocket, test_Message, &messageInfo);
+		if (error != OT_ERROR_NONE) break;
+
+		error = otUdpClose(myInstance, &mySocket);
+		
+	}while(false); 
+
+	if (error == OT_ERROR_NONE)
+		printk("Sent.\n");
+	else	
+		printk("udpSend error: %d\n", error);
 }
